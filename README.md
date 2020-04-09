@@ -11,7 +11,7 @@ pip install networkx
 
 1. Run the graph generator python script. This will generate graph data points:
    ```
-   python graph_generator <number-of-nodes>
+   python graph_generator.py <number-of-nodes>
    ```
    The generated graph is an Erdős–Rényi random graph. On average, nodes should have 8 neighbors.
    The script will create two text files with data: `generated_links.txt` and `generated_nodes.txt`.
