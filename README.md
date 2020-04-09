@@ -1,5 +1,5 @@
 # analysis-spammer
-Utility to spam GoShimmer Analysis Server with autopeering heratbeat messages
+Utility to spam GoShimmer Analysis Server with autopeering heartbeat messages
 
 # Prerequisites
 
