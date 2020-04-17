@@ -19,7 +19,7 @@ pip install networkx
 2. Run `main.go`. This will consume the generated data, and start sending heartbeat
    messages to `127.0.0.1:188`, the assumed address of the Analysis Server.
    ```
-   go run main.go
+   go run main.go --patern=<flood, floodReverse, distribute> --nps=<number>
    ```
 
  For each generated node, the spammer sends one heartbeat message with all neighbors per 5 seconds to the server.
