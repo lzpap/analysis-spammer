@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"crypto/sha256"
+	"flag"
 	"fmt"
 	"log"
 	"net"
@@ -14,6 +15,9 @@ import (
 	"crypto/rand"
 )
 
+var additionRate = flag.Float64("nps", 10.0, "Amount of nodes to add each second")
+var pattern = flag.String("pattern", "distribute", "Pattern for spamming")
+
 // A heartbeat packet
 type Packet struct {
 	OwnID       []byte
@@ -21,7 +25,19 @@ type Packet struct {
 	InboundIDs  [][]byte
 }
 
+var methods = map[string]func([]string, map[string][]string){
+	"flood":         flood,
+	"flood-reverse": floodReverse,
+	"distribute":    distribute,
+}
+
+// Scenario ideas:
+// 1. Distribute reporting times over 5 seconds evenly
+// 2. Start sending heartbeats in reverse order (nodes)
+// 3. Start sending in random order
+
 func main() {
+	flag.Parse()
 	nodes := readNodes()
 	links := readLinks()
 
@@ -38,6 +54,20 @@ func main() {
 		}
 	}
 	fmt.Println("Linkcount is: ", linkCounter)
+	actualPattern := methods[*pattern]
+	actualPattern(nodes, links)
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-ticker.C:
+			fmt.Println("I'm alive.")
+		}
+	}
+}
+
+// flood() floodes the server with heartbeats starting from the first node.
+// Heartbeat messages are sent immediately after one another.
+func flood(nodes []string, links map[string][]string) {
 	for _, node := range nodes {
 		own := []byte(node)
 
@@ -69,13 +99,84 @@ func main() {
 		packet := Packet{OwnID: own, OutboundIDs: out, InboundIDs: in}
 
 		go sendPacket(packet)
-		//time.Sleep(30 * time.Millisecond)
 	}
-	ticker := time.NewTicker(5 * time.Second)
-	for {
-		select {
-		case <-ticker.C:
-			fmt.Println("I'm alive.")
+}
+
+// floodReverse() floodes the server with heartbeats starting from the last node.
+// Heartbeat messages are sent immediately after one another.
+func floodReverse(nodes []string, links map[string][]string) {
+	for i := len(nodes) - 1; i > 0; i-- {
+		node := nodes[i]
+		own := []byte(node)
+
+		out := make([][]byte, len(links[node]))
+		for i, neighbor := range links[node] {
+			out[i] = []byte(neighbor)
+		}
+
+		inSize := 0
+
+		for _, link := range links {
+			for _, neighbor := range link {
+				if neighbor == node {
+					inSize++
+				}
+			}
+		}
+
+		in := make([][]byte, inSize)
+		inSize = 0
+		for key, value := range links {
+			for _, neighbor := range value {
+				if neighbor == node {
+					in[inSize] = []byte(key)
+					inSize++
+				}
+			}
+		}
+		packet := Packet{OwnID: own, OutboundIDs: out, InboundIDs: in}
+
+		go sendPacket(packet)
+	}
+}
+
+func distribute(nodes []string, links map[string][]string) {
+	delay := time.Duration(float64(time.Second) / (*additionRate))
+	fmt.Println("Delay is: ", delay)
+	fmt.Println("Node addition rate: ", *additionRate, " node(s)/sec")
+	for i, node := range nodes {
+		own := []byte(node)
+
+		out := make([][]byte, len(links[node]))
+		for i, neighbor := range links[node] {
+			out[i] = []byte(neighbor)
+		}
+
+		inSize := 0
+
+		for _, link := range links {
+			for _, neighbor := range link {
+				if neighbor == node {
+					inSize++
+				}
+			}
+		}
+
+		in := make([][]byte, inSize)
+		inSize = 0
+		for key, value := range links {
+			for _, neighbor := range value {
+				if neighbor == node {
+					in[inSize] = []byte(key)
+					inSize++
+				}
+			}
+		}
+		packet := Packet{OwnID: own, OutboundIDs: out, InboundIDs: in}
+
+		go sendPacket(packet)
+		if i > len(nodes)/5 {
+			time.Sleep(time.Duration(delay))
 		}
 	}
 }
@@ -83,13 +184,13 @@ func main() {
 func sendPacket(packet Packet) {
 	ticker := time.NewTicker(5 * time.Second)
 	conn, err := net.Dial("tcp", "127.0.0.1:188")
+	//i := 0
 	if err != nil {
 		fmt.Println(err.Error())
 	}
 	for {
 		select {
 		case <-ticker.C:
-
 			data, err := packet.Marshal()
 			if err != nil {
 				fmt.Println(err)
@@ -97,6 +198,7 @@ func sendPacket(packet Packet) {
 			_, _ = conn.Write(data)
 		}
 	}
+	// Deliberately keep the connection open until timeout on server (10s)
 	conn.Close()
 
 }
