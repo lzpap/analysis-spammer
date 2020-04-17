@@ -13,8 +13,7 @@ pip install networkx
    ```
    python graph_generator.py <number-of-nodes>
    ```
-   The generated graph is an Erdős–Rényi random graph. On average, nodes should have 8 neighbors.
-   The script will create two text files with data: `generated_links.txt` and `generated_nodes.txt`.
+   The generated graph is an approximation of how nodes do autopeering in GoShimmer.
 
 2. Run `main.go`. This will consume the generated data, and start sending heartbeat
    messages to `127.0.0.1:188`, the assumed address of the Analysis Server.
