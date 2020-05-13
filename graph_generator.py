@@ -112,7 +112,7 @@ print("Number of edges: " + str(len(g.edges)))
 # [(0, 1), (0, 2), (0, 4), (1, 2), (1, 5), (3, 4), (4, 5)]
 
 ## Generate a random string of specific characters 
-def randString(length=64):
+def randString(length=32):
     #put your letters in the following string
     your_letters='abcdefghijklmnopqrstvwyz01234567889'
     return ''.join((random.choice(your_letters) for i in range(length)))

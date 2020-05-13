@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"flag"
 	"fmt"
 	"log"
@@ -10,9 +9,9 @@ import (
 	"os"
 	"time"
 
-	"errors"
-
 	"crypto/rand"
+	"github.com/iotaledger/goshimmer/plugins/analysis/packet"
+
 )
 
 var additionRate = flag.Float64("nps", 10.0, "Amount of nodes to add each second")
@@ -96,7 +95,7 @@ func flood(nodes []string, links map[string][]string) {
 				}
 			}
 		}
-		packet := Packet{OwnID: own, OutboundIDs: out, InboundIDs: in}
+		packet := &packet.Heartbeat{OwnID: own, OutboundIDs: out, InboundIDs: in}
 
 		go sendPacket(packet)
 	}
@@ -134,7 +133,7 @@ func floodReverse(nodes []string, links map[string][]string) {
 				}
 			}
 		}
-		packet := Packet{OwnID: own, OutboundIDs: out, InboundIDs: in}
+		packet := &packet.Heartbeat{OwnID: own, OutboundIDs: out, InboundIDs: in}
 
 		go sendPacket(packet)
 	}
@@ -172,7 +171,7 @@ func distribute(nodes []string, links map[string][]string) {
 				}
 			}
 		}
-		packet := Packet{OwnID: own, OutboundIDs: out, InboundIDs: in}
+		packet := &packet.Heartbeat{OwnID: own, OutboundIDs: out, InboundIDs: in}
 
 		go sendPacket(packet)
 		if i > len(nodes)/5 {
@@ -181,9 +180,9 @@ func distribute(nodes []string, links map[string][]string) {
 	}
 }
 
-func sendPacket(packet Packet) {
+func sendPacket(p *packet.Heartbeat) {
 	ticker := time.NewTicker(5 * time.Second)
-	conn, err := net.Dial("tcp", "127.0.0.1:188")
+	conn, err := net.Dial("tcp", "0.0.0.0:16178")
 	//i := 0
 	if err != nil {
 		fmt.Println(err.Error())
@@ -191,7 +190,7 @@ func sendPacket(packet Packet) {
 	for {
 		select {
 		case <-ticker.C:
-			data, err := packet.Marshal()
+			data, err := packet.NewHeartbeatMessage(p)
 			if err != nil {
 				fmt.Println(err)
 			}
@@ -208,150 +207,6 @@ func GenRandomBytes(size int) (blk []byte, err error) {
 	_, err = rand.Read(blk)
 	return
 }
-
-func Unmarshal(data []byte) (*Packet, error) {
-	// So far we are only sure about the static part
-	MARSHALED_TOTAL_SIZE := MARSHALED_PACKET_HEADER_SIZE + MARSHALED_OWN_ID_SIZE
-	// Check if len is smaller than the static parts we know at the moment
-	if len(data) < MARSHALED_TOTAL_SIZE || data[0] != MARSHALED_PACKET_HEADER {
-		return nil, ErrMalformedHeartbeatPacket
-	}
-
-	// First the static part
-	unmarshaledOwnID := make([]byte, MARSHALED_OWN_ID_SIZE)
-	copy(unmarshaledOwnID[:MARSHALED_OWN_ID_SIZE], data[MARSHALED_OWN_ID_START:MARSHALED_OWN_ID_END])
-
-	// Now the dynamic parts, first outbound neighbors
-	lengthOutboundIDs := int(data[MARSHALED_OUTBOUND_IDS_LENGTH_START])
-
-	MARSHALED_TOTAL_SIZE += MARSHALED_OUTBOUND_IDS_LENGTH_SIZE + lengthOutboundIDs*MARSHALED_OUTBOUND_ID_SIZE
-	// Check if len is smaller than the size we know at the moment
-	if len(data) < MARSHALED_TOTAL_SIZE {
-		return nil, ErrMalformedHeartbeatPacket
-	}
-
-	unmarshaledOutboundIDs := make([][]byte, lengthOutboundIDs)
-
-	for i := range unmarshaledOutboundIDs {
-		// Allocate space for each ID
-		unmarshaledOutboundIDs[i] = make([]byte, MARSHALED_OUTBOUND_ID_SIZE)
-		copy(unmarshaledOutboundIDs[i][:MARSHALED_OUTBOUND_ID_SIZE], data[MARSHALED_OUTBOUND_IDS_LENGTH_END+i*MARSHALED_OUTBOUND_ID_SIZE:MARSHALED_OUTBOUND_IDS_LENGTH_END+(i+1)*MARSHALED_OUTBOUND_ID_SIZE])
-	}
-
-	MARSHALED_INBOUND_IDS_LENGTH_START := MARSHALED_OUTBOUND_IDS_LENGTH_END + lengthOutboundIDs*MARSHALED_OUTBOUND_ID_SIZE
-	MARSHALED_INBOUND_IDS_LENGTH_END := MARSHALED_INBOUND_IDS_LENGTH_START + MARSHALED_INBOUND_IDS_LENGTH_SIZE
-
-	// Second dynamic part, inbound neighbors
-	lengthInboundIDs := int(data[MARSHALED_INBOUND_IDS_LENGTH_START])
-
-	MARSHALED_TOTAL_SIZE += MARSHALED_INBOUND_IDS_LENGTH_SIZE + lengthInboundIDs*MARSHALED_INBOUND_ID_SIZE
-	// Check if len is smaller than the size we know at the moment
-	if len(data) < MARSHALED_TOTAL_SIZE {
-		return nil, ErrMalformedHeartbeatPacket
-	}
-
-	unmarshaledInboundIDs := make([][]byte, lengthInboundIDs)
-
-	for i := range unmarshaledInboundIDs {
-		// Allocate space for each ID
-		unmarshaledInboundIDs[i] = make([]byte, MARSHALED_INBOUND_ID_SIZE)
-		copy(unmarshaledInboundIDs[i][:MARSHALED_INBOUND_ID_SIZE], data[MARSHALED_INBOUND_IDS_LENGTH_END+i*MARSHALED_INBOUND_ID_SIZE:MARSHALED_INBOUND_IDS_LENGTH_END+(i+1)*MARSHALED_INBOUND_ID_SIZE])
-	}
-
-	unmarshaledPackage := &Packet{
-		OwnID:       unmarshaledOwnID,
-		OutboundIDs: unmarshaledOutboundIDs,
-		InboundIDs:  unmarshaledInboundIDs,
-	}
-
-	return unmarshaledPackage, nil
-
-}
-
-func (packet *Packet) Marshal() ([]byte, error) {
-	// Calculate total needed bytes based on packet
-	MARSHALED_TOTAL_SIZE := MARSHALED_PACKET_HEADER_SIZE + MARSHALED_OWN_ID_SIZE +
-		// Dynamic part 1, outbound IDs
-		MARSHALED_OUTBOUND_IDS_LENGTH_SIZE + len(packet.OutboundIDs)*MARSHALED_OUTBOUND_ID_SIZE +
-		// Dynamic part 2, Inbound IDs
-		MARSHALED_INBOUND_IDS_LENGTH_SIZE + len(packet.InboundIDs)*MARSHALED_INBOUND_ID_SIZE
-
-	marshaledPackage := make([]byte, MARSHALED_TOTAL_SIZE)
-
-	// Header byte
-	marshaledPackage[MARSHALED_PACKET_HEADER_START] = MARSHALED_PACKET_HEADER
-
-	// Own nodeId
-	copy(marshaledPackage[MARSHALED_OWN_ID_START:MARSHALED_OWN_ID_END], packet.OwnID[:MARSHALED_OWN_ID_SIZE])
-
-	// Outbound nodeIds, need to tell first how many we have to be able to unmarshal it later
-	lengthOutboundIDs := len(packet.OutboundIDs)
-	if lengthOutboundIDs > MAX_OUTBOUND_NEIGHBOR_COUNT {
-		return nil, ErrTooManyNeighborsToReport
-	} else {
-		marshaledPackage[MARSHALED_OUTBOUND_IDS_LENGTH_START] = byte(lengthOutboundIDs)
-	}
-
-	// Copy contents of packet.OutboundIDs
-	for i, outboundID := range packet.OutboundIDs {
-		copy(marshaledPackage[MARSHALED_OUTBOUND_IDS_LENGTH_END+i*MARSHALED_OUTBOUND_ID_SIZE:MARSHALED_OUTBOUND_IDS_LENGTH_END+(i+1)*MARSHALED_OUTBOUND_ID_SIZE], outboundID[:MARSHALED_OUTBOUND_ID_SIZE])
-	}
-
-	// Calculate where inbound nodeId-s start
-	MARSHALED_INBOUND_IDS_LENGTH_START := MARSHALED_OUTBOUND_IDS_LENGTH_END + lengthOutboundIDs*MARSHALED_OUTBOUND_ID_SIZE
-
-	// Tell how many inbound nodeId-s we have
-	lengthInboundIDs := len(packet.InboundIDs)
-	if lengthInboundIDs > MAX_INBOUND_NEIGHBOR_COUNT {
-		return nil, ErrTooManyNeighborsToReport
-	} else {
-		marshaledPackage[MARSHALED_INBOUND_IDS_LENGTH_START] = byte(lengthInboundIDs)
-	}
-
-	// End of length is the start of inbound nodeId-s
-	MARSHALED_INBOUND_IDS_LENGTH_END := MARSHALED_INBOUND_IDS_LENGTH_START + MARSHALED_INBOUND_IDS_LENGTH_SIZE
-
-	// Copy contents of packet.InboundIDs
-	for i, inboundID := range packet.InboundIDs {
-		copy(marshaledPackage[MARSHALED_INBOUND_IDS_LENGTH_END+i*MARSHALED_INBOUND_ID_SIZE:MARSHALED_INBOUND_IDS_LENGTH_END+(i+1)*MARSHALED_INBOUND_ID_SIZE], inboundID[:MARSHALED_INBOUND_ID_SIZE])
-	}
-
-	return marshaledPackage, nil
-}
-
-const (
-	MARSHALED_PACKET_HEADER = 0x01
-
-	// Maximum number of allowed neighbors in one direction
-	MAX_OUTBOUND_NEIGHBOR_COUNT = 20
-	MAX_INBOUND_NEIGHBOR_COUNT  = 20
-
-	// Maximum packet length in bytes
-	MAX_MARSHALED_TOTAL_SIZE = MARSHALED_PACKET_HEADER_SIZE + MARSHALED_OWN_ID_SIZE +
-		MARSHALED_OUTBOUND_IDS_LENGTH_SIZE + MAX_OUTBOUND_NEIGHBOR_COUNT*MARSHALED_OUTBOUND_ID_SIZE +
-		MARSHALED_INBOUND_IDS_LENGTH_SIZE + MAX_INBOUND_NEIGHBOR_COUNT*MARSHALED_INBOUND_ID_SIZE
-
-	MARSHALED_PACKET_HEADER_START = 0
-	MARSHALED_PACKET_HEADER_SIZE  = 1
-	MARSHALED_PACKET_HEADER_END   = MARSHALED_PACKET_HEADER_START + MARSHALED_PACKET_HEADER_SIZE
-
-	MARSHALED_OWN_ID_START = MARSHALED_PACKET_HEADER_END
-	MARSHALED_OWN_ID_SIZE  = sha256.Size
-	MARSHALED_OWN_ID_END   = MARSHALED_OWN_ID_START + MARSHALED_OWN_ID_SIZE
-
-	MARSHALED_OUTBOUND_IDS_LENGTH_START = MARSHALED_OWN_ID_END
-	MARSHALED_OUTBOUND_IDS_LENGTH_SIZE  = 1
-	MARSHALED_OUTBOUND_ID_SIZE          = sha256.Size
-	MARSHALED_OUTBOUND_IDS_LENGTH_END   = MARSHALED_OUTBOUND_IDS_LENGTH_START + MARSHALED_OUTBOUND_IDS_LENGTH_SIZE
-
-	MARSHALED_INBOUND_IDS_LENGTH_SIZE = 1
-	MARSHALED_INBOUND_ID_SIZE         = sha256.Size
-)
-
-var (
-	ErrMalformedHeartbeatPacket = errors.New("malformed heartbeat packet")
-	ErrTooManyNeighborsToReport = errors.New("too many neighbors to report in packet")
-)
 
 var nodes = []string{}
 var links = make(map[string][]string)
@@ -384,9 +239,11 @@ func readLinks() map[string][]string {
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		line := scanner.Text()
-		source := line[:64]
-		target := line[64:]
-		links[source] = append(links[source], target)
+		source := line[:32]
+		target := line[32:]
+		if len(links[source]) < 4 {
+			links[source] = append(links[source], target)
+		}
 	}
 
 	if err := scanner.Err(); err != nil {
